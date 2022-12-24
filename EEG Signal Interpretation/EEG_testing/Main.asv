@@ -1,0 +1,849 @@
+%%% MAIN
+% We will launch from here all the functions to read the data from the edf
+% files and process it up to a certain point
+% https://www.physionet.org/physiobank/database/eegmmidb/
+clear
+%% Global Variables
+c3=9;
+cz=11;
+c4=13;
+w_opt = 2;
+w_size= 160*[0.30 0.15];
+subjects = 10;
+tests = 9;
+
+notch = 50;
+band = [3 80];
+freq = 160;
+
+file = 'C:\users\sergi\Desktop\TFM\EEG_testing\Database_samples\S0';
+file2 = 'C:\users\sergi\Desktop\TFM\EEG_testing\Database_events\S0';
+eeg = {};
+eeg_label = {};
+read = 1;
+if read == 1
+    %% Reading the data
+    % we will store the data in time tables inside a cell for the same
+    % experiment, inside a cell with the other cell/experiments
+    [A,B,C,D] = butter(10,[3 78]/(freq*0.5));
+    band_f = designfilt('bandpassiir','FilterOrder',20, ...
+        'HalfPowerFrequency1',3,'HalfPowerFrequency2',78, ...
+        'SampleRate',freq);
+    sos = ss2sos(A,B,C,D);
+    Hd =  dfilt.statespace(A,B,C,D);
+    % fvt = fvtool(sos,band_f,'Fs',1500);
+    % legend(fvt,'butter','designfilt')
+
+    notch_f = designfilt('bandstopiir','FilterOrder',2, ...
+                   'HalfPowerFrequency1',59,'HalfPowerFrequency2',61, ...
+                   'DesignMethod','butter','SampleRate',freq);
+
+
+    for i=1:subjects
+        for j=1:tests
+            if i<10
+                name=strcat(file,int2str(0),int2str(i),'R',int2str(0),int2str(j),'.edf');
+                name2=strcat(file2,int2str(0),int2str(i),'R',int2str(0),int2str(j),'.edf.event.txt');
+            else
+                name=strcat(file,int2str(i),'R',int2str(0),int2str(j),'.edf');
+                name2=strcat(file2,int2str(i),'R',int2str(0),int2str(j),'.edf.event.txt');
+            end
+
+            [hdr,data]=edfread(name);
+            data= data([c3 cz c4],160:end-160)';
+            filtered = filter(Hd,data);
+            filtered_2 = filtfilt(notch_f,filtered);
+            eeg{j}{i} = filtered_2;
+            eeg_label{j}{i} = script_event(name2);
+        end
+    end
+    % t = (0:length(data(:,1))-1)/freq;
+    % plot(t,data(:,1),t,filtered_2)
+    % ylabel('Voltage (uV)')
+    % xlabel('Time (s)')
+    % title('EEG for imaginary motion')
+    % legend('Unfiltered','Notch Filtered')
+    % grid
+
+    %% Splitting the data --> Feature extraction
+    % We want to group the data in small windss that we can relate to the
+    % phisiology of the mental responso inside the experiment
+    f1 = freq*(0:(w_size(1)/2))/w_size(1);
+    f2 = freq*(0:(w_size(2)/2))/w_size(2);
+    database_1 = {{{}}};
+    database_2 = {{{}}};
+    database_1t = {{{}}};
+    database_2t = {{{}}};
+    label_1 = {{{}}};
+    label_2 = {{{}}};
+    for j=1:tests
+        for i=1:subjects
+            n_1 = 1;
+            n_2 = 1;
+            block = eeg{j}{i};
+            lab = eeg_label{j}{i};
+            for n=1:floor(length(block(:,1))/w_size(1))
+                piece=block(((n-1)*w_size(1)+1):((n)*w_size(1)+1),:);
+                Y=fft(piece);
+                P2 = abs(Y/w_size(1));
+                P1 = P2(1:w_size(1)/2+1,:);
+                P1(2:end-1,:) = 2*P1(2:end-1,:);
+                database_1{j}{i}{n_1}=P1;
+                database_1t{j}{i}{n_1}=piece;
+%                 database_1{j}{i}{n_1}=normalize(P1,1);
+%                 database_1t{j}{i}{n_1}=normalize(piece,1);
+                if(isnan(lab))
+                    label_1{j}{i}{n_1}=0;
+                else
+                    label_1{j}{i}{n_1}=mode(lab);
+                end
+                n_1 = n_1 + 1;
+            end
+
+            for n=1:floor(length(block(:,1))/w_size(2))
+                piece=block(((n-1)*w_size(2)+1):((n)*w_size(2)+1),:);
+                Y=fft(piece);
+                P2 = abs(Y/w_size(2));
+                P1 = P2(1:w_size(2)/2+1,:);
+                P1(2:end-1,:) = 2*P1(2:end-1,:);
+                database_2{j}{i}{n_2}=P1;
+                database_2t{j}{i}{n_2}=piece;
+                if(isnan(lab))
+                    label_2{j}{i}{n_2}=0;
+                else
+                    label_2{j}{i}{n_2}=mode(lab);
+                end
+                n_2 = n_2 + 1;
+            end
+        end
+    end
+
+    % database structure: [Test Subject windss] 
+    save('C:\users\sergi\Desktop\TFM\EEG_testing\Databases_aug1.mat','database_1','database_1t','database_2','label_1','label_2')
+    % plot(f2,P1) 
+    % title('Single-Sided Amplitude Spectrum of X(t)')
+    % xlabel('f (Hz)')
+    % ylabel('|P1(f)|')
+    %% Visualization
+    vis = 1;
+    data = database_1;
+    %userss in rows -->
+    users = [10 20 30 40];
+    %windss in columns ^|
+    winds = [2 4 6 8];
+    experiments = [1 2 3 4];
+    if vis==0
+        for i=1:length(experiments)
+            f = figure
+    %         p = uipanel('Parent',f,'BorderType','none'); 
+    %         name = strcat('Experiment #',int2str(experiments(i)));
+    %         p.Title = name; 
+    %         p.TitlePosition = 'centertop'; 
+    %         p.FontSize = 12;
+    %         p.FontWeight = 'bold';
+    %         xlabel('f (Hz)')
+    %         ylabel('|P1(f)|')
+            %1st users
+            ax1 = subplot(4,4,1);
+            plot(f1,data{experiments(i)}{users(1)}{winds(1)}) 
+            title(strcat('Subject #',int2str(users(1)),' | winds #',int2str(winds(1))));
+            ax2 = subplot(4,4,2);
+            plot(f1,data{experiments(i)}{users(1)}{winds(2)}) 
+            title(strcat('Subject #',int2str(users(1)),' | winds #',int2str(winds(2))));
+            ax3 = subplot(4,4,3);
+            plot(f1,data{experiments(i)}{users(1)}{winds(3)}) 
+            title(strcat('Subject #',int2str(users(1)),' | winds #',int2str(winds(3))));
+            ax4 = subplot(4,4,4);
+            plot(f1,data{experiments(i)}{users(1)}{winds(4)}) 
+            title(strcat('Subject #',int2str(users(1)),' | winds #',int2str(winds(4))));
+            %2nd users
+            ax5 = subplot(4,4,5);
+            plot(f1,data{experiments(i)}{users(2)}{winds(1)}) 
+            title(strcat('Subject #',int2str(users(2)),' | winds #',int2str(winds(1))));
+            ax6 = subplot(4,4,6);
+            plot(f1,data{experiments(i)}{users(2)}{winds(2)}) 
+            title(strcat('Subject #',int2str(users(2)),' | winds #',int2str(winds(2))));
+            ax7 = subplot(4,4,7);
+            plot(f1,data{experiments(i)}{users(2)}{winds(3)}) 
+            title(strcat('Subject #',int2str(users(2)),' | winds #',int2str(winds(3))));
+            ax8 = subplot(4,4,8);
+            plot(f1,data{experiments(i)}{users(2)}{winds(4)}) 
+            title(strcat('Subject #',int2str(users(2)),' | winds #',int2str(winds(4))));
+            %3rd users
+            ax9 = subplot(4,4,9);
+            plot(f1,data{experiments(i)}{users(3)}{winds(1)}) 
+            title(strcat('Subject #',int2str(users(3)),' | winds #',int2str(winds(1))));
+            ax10 = subplot(4,4,10);
+            plot(f1,data{experiments(i)}{users(3)}{winds(2)}) 
+            title(strcat('Subject #',int2str(users(3)),' | winds #',int2str(winds(2))));
+            ax11 = subplot(4,4,11);
+            plot(f1,data{experiments(i)}{users(3)}{winds(3)}) 
+            title(strcat('Subject #',int2str(users(3)),' | winds #',int2str(winds(3))));
+            ax12 = subplot(4,4,12);
+            plot(f1,data{experiments(i)}{users(3)}{winds(4)}) 
+            title(strcat('Subject #',int2str(users(3)),' | winds #',int2str(winds(4))));
+
+            %4th users
+            ax13 = subplot(4,4,13);
+            plot(f1,data{experiments(i)}{users(4)}{winds(1)}) 
+            title(strcat('Subject #',int2str(users(4)),' | winds #',int2str(winds(1))));
+            ax14 = subplot(4,4,14);
+            plot(f1,data{experiments(i)}{users(4)}{winds(2)}) 
+            title(strcat('Subject #',int2str(users(4)),' | winds #',int2str(winds(2))));
+            ax15 = subplot(4,4,15);
+            plot(f1,data{experiments(i)}{users(4)}{winds(3)}) 
+            title(strcat('Subject #',int2str(users(4)),' | winds #',int2str(winds(3))));
+            ax16 = subplot(4,4,16);
+            plot(f1,data{experiments(i)}{users(4)}{winds(4)}) 
+            title(strcat('Subject #',int2str(users(4)),' | winds #',int2str(winds(4))));
+        end
+    end
+
+    %% Analysing the data 
+    % Different classification methods and the obtained performance
+    % We must compare the classifier just for one subject vs for all of them
+    % I: Fourier energy levels
+    % Best Band Selection 
+    clear database_2
+    data = database_1;
+    label = label_1;
+    rest=zeros(size(data{5}{5}{5}));
+    activity=zeros(size(data{5}{5}{5}));
+    n_r = 0;
+    n_a = 0;
+
+    % we should make the average of the percentual 'strength' of each value to
+    % be considered and compare to the average results
+
+    %absolute value check
+    for j=1:tests
+        for i=1:subjects
+            s = size(data{j}{i});
+            for n = 1:s(2)
+               if j<3
+                   n_r=n_r+1;
+                   rest=rest+data{j}{i}{n};
+               else
+                   n_a=n_a+1;
+                   activity=activity+data{j}{i}{n};
+               end
+
+            end
+        end
+    end
+    ac = [sum(activity(:,1)) sum(activity(:,2)) sum(activity(:,3))];
+    activity = [activity(:,1)/ac(1) activity(:,2)/ac(2) activity(:,2)/ac(2)];
+    re = [sum(rest(:,1)) sum(rest(:,2)) sum(rest(:,3))];
+    rest = [rest(:,1)/re(1) rest(:,2)/re(2) rest(:,2)/re(2)];
+    diff_1 = abs(activity-rest);
+
+    %%%%%%%%%%%%% (re-set up)
+    data = database_1;
+    rest=zeros(size(data{5}{5}{5}));
+    activity=zeros(size(data{5}{5}{5}));
+    n_r = 0;
+    n_a = 0;
+    %relative value check
+    for j=1:tests
+        for i=1:subjects
+            s = size(data{j}{i});
+            for n = 1:s(2)
+               if n==1
+                   pie = data{j}{i}{n};
+                   rel = [max(pie(:,1)) max(pie(:,2)) max(pie(:,3))];
+               end
+               if j<3
+                   n_r=n_r+1;
+                   rest=rest+[data{j}{i}{n}(:,1)/rel(1) data{j}{i}{n}(:,2)/rel(2) data{j}{i}{n}(:,3)/rel(3)];
+               else
+                   n_a=n_a+1;
+                   activity=activity+[data{j}{i}{n}(:,1)/rel(1) data{j}{i}{n}(:,2)/rel(2) data{j}{i}{n}(:,3)/rel(3)];
+               end
+
+            end
+        end
+    end
+    rest = rest/n_r;
+    activity = activity/n_a;
+    diff_2 = abs(activity-rest);
+    features = 6;
+    [val,c3_f] = maxk(diff_2(:,1),features);
+    [val,cz_f] = maxk(diff_2(:,2),features);
+    [val,c4_f] = maxk(diff_2(:,3),features);
+
+    % Distance Multyplane based classifier
+    % we pass all the values to a format suitable for the classification
+        %Labels as well --> 0:rest  1:open-left 2:open-right 3:imagine-left
+        %4:imagine-right 5:open-fists 6:open-feets
+    X_9_9 = [];
+    Y_9_9 = [];
+    X_bin_1 = [];
+    Y_bin_1 = [];
+    X_bin_2 = [];
+    Y_bin_2 = [];
+    num =0;
+    for j=1:tests
+        for i=1:subjects
+            s = size(data{j}{i});
+            for n = 1:s(2)
+               if n==1
+                   pie = data{j}{i}{n};
+                   rel = [max(pie(:,1)) max(pie(:,2)) max(pie(:,3))];
+               end 
+               num = num + 1;
+
+               if j<3
+                   Y_9_9(num) = 0; %tag 0 means rest (eyes closed or open indistintly)
+                   res = [data{j}{i}{n}(:,1)/rel(1) data{j}{i}{n}(:,2)/rel(2) data{j}{i}{n}(:,3)/rel(3)];
+                   X_9_9(:,num) = [res(c3_f,1);res(cz_f,2);res(c4_f,3)];
+                   %%%%%%%%%%
+                   Y_bin_1(num) = 0;
+                   X_bin_1(:,num) = [res(c3_f,1);res(cz_f,2);res(c4_f,3)];
+                   %%%%%%%%%%
+                   Y_bin_2(num) = 0;
+                   X_bin_2(:,num) = [res(c3_f,1);res(cz_f,2);res(c4_f,3)];
+               elseif j==3 || j==7
+                   if label{j}{i}{n}==1
+                       Y_9_9(num) = 1; 
+                       Y_bin_1(num) = 1; 
+                   elseif label{j}{i}{n}==2
+                       Y_9_9(num) = 2; 
+                       Y_bin_1(num) = 2; 
+                   end
+
+                   res = [data{j}{i}{n}(:,1)/rel(1) data{j}{i}{n}(:,2)/rel(2) data{j}{i}{n}(:,3)/rel(3)];
+                   X_9_9(:,num) = [res(c3_f,1);res(cz_f,2);res(c4_f,3)];
+                   X_bin_1(:,num) = [res(c3_f,1);res(cz_f,2);res(c4_f,3)];
+               elseif j==4 || j==8
+                   if label{j}{i}{n}==1
+                       Y_9_9(num) = 3; 
+                       Y_bin_2(num) = 1;
+                   elseif label{j}{i}{n}==2
+                       Y_9_9(num) = 4; 
+                       Y_bin_2(num) = 2;
+                   end
+                   res = [data{j}{i}{n}(:,1)/rel(1) data{j}{i}{n}(:,2)/rel(2) data{j}{i}{n}(:,3)/rel(3)];
+                   X_9_9(:,num) = [res(c3_f,1);res(cz_f,2);res(c4_f,3)];
+                   X_bin_2(:,num) = [res(c3_f,1);res(cz_f,2);res(c4_f,3)];
+               elseif j==5 || j==9
+                   if label{j}{i}{n}==1
+                       Y_9_9(num) = 5; 
+                   elseif label{j}{i}{n}==2
+                       Y_9_9(num) = 6; 
+                   end
+                   res = [data{j}{i}{n}(:,1)/rel(1) data{j}{i}{n}(:,2)/rel(2) data{j}{i}{n}(:,3)/rel(3)];
+                   X_9_9(:,num) = [res(c3_f,1);res(cz_f,2);res(c4_f,3)];
+               elseif j==6
+    %                Y_9_9(num) = 4;
+    %                res = [data{j}{i}{n}(:,1)/rel(1) data{j}{i}{n}(:,2)/rel(2) data{j}{i}{n}(:,3)/rel(3)];
+    %                X_9_9(:,num) = [res(c3_f,1);res(cz_f,2);res(c4_f,3)];
+               end
+
+            end
+        end
+    end
+    %%%%%%%%%%%%%%%
+    % We make sure the database contains equal proportion for all the classes
+    [a1,b1]=hist(Y_bin_1,unique(Y_bin_1));
+    [a2,b2]=hist(Y_bin_2,unique(Y_bin_2));
+    min1 = min(a1);
+    min2 = min(a2);
+
+    full = 0;
+    n1=0;
+    n2=0;
+    n3=0;
+    Y_1=[];
+    X_1=[];
+    i=0;
+    k=0;
+    while full == 0
+        i=i+1;
+        if Y_bin_1(1,i)==0
+            n1=n1+1;
+            if n1<min1
+                k=k+1;
+                Y_1(1,k)=0;
+                X_1(:,k)=X_bin_1(:,i);
+            end
+        elseif  Y_bin_1(1,i)==1
+            n2=n2+1;
+            if n2<min1
+                k=k+1;
+                Y_1(1,k)=1;
+                X_1(:,k)=X_bin_1(:,i);
+            end
+        elseif  Y_bin_1(1,i)==2
+            n3=n3+1;
+            if n3<min1
+                k=k+1;
+                Y_1(1,k)=2;
+                X_1(:,k)=X_bin_1(:,i);
+            end
+        end
+        if (n1>=min1) && (n2>=min1) && (n3>=min1)
+            full = 1;
+        end
+    end
+    %%%%%%%%%%%%%%%%
+    full = 0;
+    n1=0;
+    n2=0;
+    n3=0;
+    Y_2=[];
+    X_2=[];
+    i=0;
+    k=0;
+    while full == 0
+        i=i+1;
+        if Y_bin_2(1,i)==0
+            n1=n1+1;
+            if n1<min2
+                k=k+1;
+                Y_2(1,k)=0;
+                X_2(:,k)=X_bin_2(:,i);
+            end
+        elseif  Y_bin_2(1,i)==1
+            n2=n2+1;
+            if n2<min2
+                k=k+1;
+                Y_2(1,k)=1;
+                X_2(:,k)=X_bin_2(:,i);
+            end
+        elseif  Y_bin_2(1,i)==2
+            n3=n3+1;
+            if n3<min2
+                k=k+1;
+                Y_2(1,k)=2;
+                X_2(:,k)=X_bin_2(:,i);
+            end
+        end
+        if (n1>=min2) && (n2>=min2) && (n3>=min2)
+            full = 1;
+        end
+    end
+    %%%%%%%%%%%%%%%
+    %PCA for X_1
+    [coeff,score,latent,tsquared,explained] = pca(X_1');
+    scatter3(score(:,1),score(:,2),score(:,3))
+    axis equal
+    xlabel('1st Principal Component')
+    ylabel('2nd Principal Component')
+    zlabel('3rd Principal Component')
+    
+    Y_label= {'Frequency Bands';'C3: 6-9 Hz';'C3: 15-18 Hz';'C3: 9-12 Hz';'C3: 27-30 Hz';'C3: 18-21 Hz';'C3: 30-33 Hz';'Cz: 6-9 Hz';'Cz: 12-15 Hz';'Cz: 27-30 Hz';'Cz: 30-33 Hz';'Cz: 24-27 Hz';'Cz: 55-58 Hz';'C4: 6-9 Hz';'C4: 9-12 Hz';'C4: 12-15 Hz';'C4: 27-30 Hz';'C4: 15-18 Hz';'C4: 18-21 Hz'}
+    mapcaplot(X_1, Y_label)
+    
+    database_class_row = [X_9_9; Y_9_9]';
+    database_class_column = [X_9_9; Y_9_9];
+    database_bin_1 = [X_1; Y_1]';
+    database_bin_2 = [X_1; Y_1];
+    save('C:\users\sergi\Desktop\TFM\EEG_testing\Databases_9_9.mat','X_9_9','Y_9_9')
+
+    %reduce size of database
+    % determine how many elements is ten percent
+    len = size(database_class_row);
+    numelements = 15000;%round(0.2*len(2));
+    % get the randomly-selected indices
+    indices = randperm(len(2));
+    indices = indices(1:numelements);
+    % choose the subset of a you want
+    data_reduced = database_class(indices,:);
+    data_reduced = database_class(indices,:);
+    X_reduced = X_9_9(indices,:);
+    Y_reduced = Y_9_9(indices,:);
+
+
+    %% II: LSTM
+    %https://es.mathworks.com/help/nnet/ref/nnet.cnn.layer.sequenceinputlayer.htm
+
+    % WE CAN USE THE FFT DATA AS A TEMPORAL SERIES --> 75% ACCURACY OBTAINED
+    % ALREADY
+
+    %OTHERWISE THE TIME SERIES IS STORED IN database_Xt
+
+    num = 0;
+    Y_t=[];
+    X_t={};
+    X_mix={};
+    X_aug={};
+    resam = [size(database_1{1}{1}{1});size(database_1t{1}{1}{1})];
+    for j=1:tests
+        for i=1:subjects
+            s = size(data{j}{i});
+            for n = 1:s(2)
+               num = num + 1;
+
+               if j<3
+                   Y_t(num,1) = 0; %tag 0 means rest (eyes closed or open indistintly)
+                   X_t{num,1} = database_1{j}{i}{n}';
+                   X_mix{num,1}= [database_1{j}{i}{n}';resample(database_1t{j}{i}{n},resam(1,1),resam(2,1))'];
+                   prov=database_1{j}{i}{n}';
+                   X_aug{num,1}= [database_1{j}{i}{n}';sum(database_1{j}{i}{n}'.^2);sum(database_1{j}{i}{n}'.^3);(prov(1,:).*prov(2,:)+prov(2,:).*prov(3,:)+prov(3,:).*prov(1,:))]; %sum(database_1{j}{i}{n}'.^2);sum(database_1{j}{i}{n}'.^3);
+               elseif j==3 || j==7
+                   if label{j}{i}{n}==1
+%                        Y_t(num,1) = 1; 
+                   elseif label{j}{i}{n}==2
+%                        Y_t(num,1) = 2; 
+                   end
+%                    X_t{num,1} = database_1{j}{i}{n}';
+%                    X_mix{num,1}= [database_1{j}{i}{n}';resample(database_1t{j}{i}{n},resam(1,1),resam(2,1))'];
+%                    prov=database_1{j}{i}{n}';
+%                    X_aug{num,1}= [database_1{j}{i}{n}';sum(database_1{j}{i}{n}'.^2);sum(database_1{j}{i}{n}'.^3);(prov(1,:).*prov(2,:)+prov(2,:).*prov(3,:)+prov(3,:).*prov(1,:))]; %sum(database_1{j}{i}{n}'.^2);sum(database_1{j}{i}{n}'.^3);
+               elseif j==4 || j==8
+                   if label{j}{i}{n}==1
+%                        Y_t(num) = 3; 
+                   elseif label{j}{i}{n}==2
+%                        Y_t(num) = 4; 
+                   end
+%                    X_t{num} = database_1{j}{i}{n}';
+%                    prov=database_1{j}{i}{n}';
+%                    X_aug{num,1}= [database_1{j}{i}{n}';sum(database_1{j}{i}{n}'.^2);sum(database_1{j}{i}{n}'.^3);(prov(1,:).*prov(2,:)+prov(2,:).*prov(3,:)+prov(3,:).*prov(1,:))];
+               elseif j==5 || j==9
+                   if label{j}{i}{n}==1
+                       Y_t(num) = 3; 
+                   elseif label{j}{i}{n}==2
+                       Y_t(num) = 4; 
+                   end
+                   X_t{num} = database_1{j}{i}{n}';
+                   X_mix{num,1}= [database_1{j}{i}{n}';resample(database_1t{j}{i}{n},resam(1,1),resam(2,1))'];
+                   prov=database_1{j}{i}{n}';
+                   X_aug{num,1}= [database_1{j}{i}{n}';sum(database_1{j}{i}{n}'.^2);sum(database_1{j}{i}{n}'.^3);(prov(1,:).*prov(2,:)+prov(2,:).*prov(3,:)+prov(3,:).*prov(1,:));];
+               end
+
+            end
+        end
+    end
+
+
+
+    %We will mix time series data with the frequency data
+    mix = 0;
+    if mix ==1
+        X_t=X_mix;
+    end
+
+    %We add to the frequency series 3 new features extracted from combination
+    %of the other 3
+    aug = 1;
+    if aug ==1
+        X_t=X_aug;
+    end
+    %we sort the data --> After so we see that there are empty cells
+    numObservations = numel(X_t);
+    for i=1:numObservations
+        sequence = X_t{i};
+        sequenceLengths(i) = size(sequence,2);
+    end
+    [sequenceLengths,idx] = sort(sequenceLengths);
+    X_t = X_t(idx);
+    Y_t = Y_t(idx);
+
+    i=1;
+    siz = size(X_t{1});
+    while siz(1)<5
+        siz = size(X_t{i});
+        X_t = X_t(2:end);
+        Y_t = Y_t(2:end);
+    end
+
+    % We make sure the database contains equal proportion for all the classes
+    [a1,b1]=hist(Y_t,unique(Y_t));
+    min1 = min(a1);
+    numClasses = size(a1,2);
+    % random sort to do a fair discard
+    [m,n] = size(Y_t) ;
+    idx = randperm(m);
+    X_t = X_t(idx);
+    Y_t = Y_t(idx);
+
+
+    full = 0;
+    num = 0;
+    n1=0;
+    n2=0;
+    n3=0;
+    n4=0;
+    n5=0;
+    Y_ts=[];
+    X_ts={};
+    i=0;
+    k=0;
+    while full == 0 && num<m
+        num=num+1;
+        if Y_t(num,1)==0
+            n1=n1+1;
+            if n1<(min1)
+                k=k+1;
+                Y_ts(k,1)=0;
+                X_ts{k,1}=X_t{num,1};
+            end
+        elseif  Y_t(num,1)==1
+            n2=n2+1;
+            if n2<min1
+                k=k+1;
+                Y_ts(k,1)=1;
+                X_ts{k,1}=X_t{num,1};
+            end
+        elseif  Y_t(num,1)==2
+            n3=n3+1;
+            if n3<min1
+                k=k+1;
+                Y_ts(k,1)=2;
+                X_ts{k,1}=X_t{num,1};
+            end
+        elseif  Y_t(num,1)==3
+            n4=n4+1;
+            if n3<min1
+                k=k+1;
+                Y_ts(k,1)=3;
+                X_ts{k,1}=X_t{num,1};
+            end
+        elseif  Y_t(num,1)==4
+            n5=n5+1;
+            if n3<min1
+                k=k+1;
+                Y_ts(k,1)=4;
+                X_ts{k,1}=X_t{num,1};
+            end
+        end
+        if (n1>=min1) && (n2>=min1) && (n3>=min1)
+            full = 1;
+        end
+    end
+    Y_ts = categorical(Y_ts);
+
+    save('C:\users\sergi\Desktop\TFM\EEG_testing\X_aug_final.mat','X_ts','Y_ts');
+    clear X_aug X_mix
+else
+    load('C:\users\sergi\Desktop\TFM\EEG_testing\X_aug_final.mat')
+end
+
+[a1,b1]=hist(Y_ts,unique(Y_ts));
+numClasses = size(a1,2);
+
+%convolutional data arrangement
+conv = 0;
+si = size(X_ts);
+if conv==1
+    conv_data = [];
+    si = size(X_ts);
+    for i=1:si(1)
+        conv_x(:,:,:,i)=X_ts{i};
+    end
+end
+%%%%%%%%%%%% Data and option selection %%%%%%%%%%%%%%%%%
+maxEpochs = 100;
+miniBatchSize = 60;
+numHiddenUnits = 125;
+sample_size=size(X_ts{1},1);
+inputSize = sample_size;
+
+[trainInd,valInd,testInd]= dividerand(si(1),0.98,0.02,0.0);
+X_train = X_ts(trainInd);
+Y_train = Y_ts(trainInd);
+X_val = X_ts(valInd);
+Y_val = Y_ts(valInd);
+if conv ==1
+    conv_train = conv_x(:,:,:,trainInd);
+    conv_val = conv_x(:,:,:,valInd);
+end
+
+options_1 = trainingOptions('adam', ...
+    'ExecutionEnvironment','auto', ...
+    'GradientThreshold',1, ...
+    'MaxEpochs',maxEpochs, ...
+    'MiniBatchSize',miniBatchSize, ...
+    'SequenceLength','longest', ...
+    'Shuffle','never', ...
+    'Verbose',0, ...
+    'Plots','training-progress');
+options_2 = trainingOptions('adam', ...
+    'GradientThreshold',0.98, ...
+    'InitialLearnRate',0.020, ...
+    'LearnRateDropPeriod',20, ...
+    'LearnRateSchedule','piecewise', ...
+    'GradientDecayFactor',0.95,...
+    'Verbose',0, ...
+    'ExecutionEnvironment','gpu',...
+    'Plots','training-progress');
+% 'LearnRateSchedule','piecewise', ...
+%     'GradientDecayFactor',0.95,...
+%     'ValidationData',{X_val,Y_val},...
+%     'ValidationPatience',Inf,...
+
+if conv==1
+    options_3 = trainingOptions('sgdm', ...
+        'GradientThreshold',0.99, ...
+        'InitialLearnRate',0.030, ...
+        'GradientDecayFactor',0.9,...
+        'Verbose',false, ...
+        'Plots','training-progress', ...
+        'ValidationData',{conv_val,Y_val}, ...
+        'ValidationPatience',Inf);
+end
+layers_1 = [ ...
+    sequenceInputLayer(inputSize)
+    lstmLayer(numHiddenUnits,'OutputMode','last')
+    %bilstmLayer(numHiddenUnits,'OutputMode','last')
+    %fullyConnectedLayer(numClasses*numHiddenUnits/5)
+    %fullyConnectedLayer(numClasses*numHiddenUnits/25)
+    fullyConnectedLayer(numClasses)
+    softmaxLayer
+    classificationLayer];
+
+layers_2 = [
+    imageInputLayer([size(X_train{1}) 1])
+    convolution2dLayer(2,50)
+    batchNormalizationLayer
+    reluLayer
+    convolution2dLayer(2,30) %,'Padding',1
+    batchNormalizationLayer
+    reluLayer
+    convolution2dLayer(2,10) %,'Padding',1
+    batchNormalizationLayer
+    reluLayer
+    maxPooling2dLayer(2,'Stride',3)
+    fullyConnectedLayer(numClasses)
+    softmaxLayer
+    classificationLayer];
+
+%analyzeNetwork(layers_1)
+%analyzeNetwork(layers_2)
+
+% HOW CAN WE AVOID LOCAL MINIMA !!!!
+if conv==1
+    trainedNet = trainNetwork(conv_train,Y_train,layers_2,options_3)
+else
+    trainedNet = trainNetwork(X_train,Y_train,layers_1,options_2)
+    save('C:\users\sergi\Desktop\TFM\EEG_testing\LSTM_Aug1.mat','trainedNet')
+end
+
+
+%% Validation
+
+numObservationsTest = numel(X_val);
+for i=1:numObservationsTest
+    sequence = X_val{i};
+    sequenceLengthsTest(i) = size(sequence,2);
+end
+[sequenceLengthsTest,idx] = sort(sequenceLengthsTest);
+X_val = X_val(idx);
+Y_val = Y_val(idx);
+
+miniBatchSize = 27;
+YPred = classify(trainedNet,X_val, ...
+    'MiniBatchSize',miniBatchSize, ...
+    'SequenceLength','longest');
+
+acc = sum(YPred == Y_val)./numel(Y_val)
+
+%% Recorded data processing
+records = 1;
+if records==1
+    clear all
+    % Global variables
+    freq_old = 1000;
+    freq = 160;
+    w_size= freq*0.30;
+
+    % Load Recorded Data
+
+    load('C:\Users\sergi\Desktop\TFM\EEG_testing\Data_recording\Test_03.mat')
+    record = resample(data,freq,freq_old); %DOES THIS FUNCTION WORK REMOTELY OK ??
+
+    %Filter and split
+    [A,B,C,D] = butter(10,[3 78]/(freq*0.5));
+    band_f = designfilt('bandpassiir','FilterOrder',20, ...
+        'HalfPowerFrequency1',3,'HalfPowerFrequency2',78, ...
+        'SampleRate',freq);
+    sos = ss2sos(A,B,C,D);
+    Hd =  dfilt.statespace(A,B,C,D);
+
+    notch_f = designfilt('bandstopiir','FilterOrder',2, ...
+                   'HalfPowerFrequency1',59,'HalfPowerFrequency2',61, ...
+                   'DesignMethod','butter','SampleRate',freq);
+
+
+    filtered = filter(Hd,record);
+    filtered_2 = filtfilt(notch_f,filtered);
+    filt = filtered_2;           
+
+    f1 = freq*(0:(w_size/2))/w_size;
+    database_1 = {};
+    database_1t = {};
+    X_aug = {};
+    Y_aug = [];
+    label_1 = {};
+    n_1 = 1;
+    n_2 = 1;
+    id=1;
+    for n=1:floor(length(filt(:,1))/w_size)
+        piece=filt(((n-1)*w_size+1):((n)*w_size+1),:);
+        %Transform
+        Y=fft(piece);
+        P2 = abs(Y/w_size);
+        P1 = P2(1:w_size/2+1,:);
+        P1(2:end-1,:) = 2*P1(2:end-1,:);
+    %     filtered = filter(Hd,data);
+    %     filtered_2 = filtfilt(notch_f,filtered);
+    %     eeg{j}{i} = filtered_2;
+        if video_label(n,freq,w_size,id)>(-1)
+            database_1{n_1}=P1;
+            database_1t{n_1}=piece;
+            prov=database_1{n_1}';
+            X_aug{n_1}= [database_1{n_1}';sum(database_1{n_1}'.^2);sum(database_1{n_1}'.^3);(prov(1,:).*prov(2,:)+prov(2,:).*prov(3,:)+prov(3,:).*prov(1,:))];
+            %Label
+            Y_aug(n_1)= video_label(n,freq,w_size,id);
+            n_1 = n_1 + 1;
+        end
+    end
+    Y_aug = categorical(Y_aug);
+    % Load Trained LSTM
+    net = load('C:\users\sergi\Desktop\TFM\EEG_testing\LSTM_12.mat')
+    %Validation
+    numObservationsTest = numel(X_aug);
+    for i=1:numObservationsTest
+        sequence = X_aug{i};
+        sequenceLengthsTest(i) = size(sequence,2);
+    end
+    [sequenceLengthsTest,idx] = sort(sequenceLengthsTest);
+    X_aug = X_aug(idx)';
+    Y_aug = Y_aug(idx)';
+
+    layers_1 = [ ...
+        sequenceInputLayer(6)
+        lstmLayer(50,'OutputMode','last')
+        %bilstmLayer(numHiddenUnits,'OutputMode','last')
+        %fullyConnectedLayer(numClasses*numHiddenUnits/5)
+        %fullyConnectedLayer(numClasses*numHiddenUnits/25)
+        fullyConnectedLayer(3)
+        softmaxLayer
+        classificationLayer];
+
+    options_2 = trainingOptions('adam', ...
+        'GradientThreshold',0.95, ...
+        'InitialLearnRate',0.035, ...
+        'LearnRateSchedule','piecewise', ...
+        'LearnRateDropPeriod',25, ...
+        'Verbose',0, ...
+        'ExecutionEnvironment','gpu',...
+        'Plots','training-progress');
+
+    miniBatchSize = 60;
+    trainedSmall = trainNetwork(X_aug,Y_aug,layers_1,options_2)
+    
+    [updatedNet,YPred] = classifyAndUpdateState(net,X_aug)
+    acc_re = sum(YPred == Y_aug)./numel(Y_aug)
+
+    %HOW TO REFER TO THE RIGHT "CLASSIFY" FUNCTION ??
+    [YPred,scores] = classify(net,X_aug,'SequenceLength','longest');
+    acc_orig = sum(YPred == Y_aug)./numel(Y_aug)
+    
+
+    
+    [YPred,scores] = classify(trainedSmall,X_aug,'SequenceLength','longest');
+    %[updatedNet,YPred] = classifyAndUpdateState(recNet,C)
+
+    acc = sum(YPred == Y_aug)./numel(Y_aug)
+end
